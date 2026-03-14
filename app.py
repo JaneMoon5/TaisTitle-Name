@@ -113,6 +113,8 @@ end_date = st.sidebar.date_input("结束日期", st.session_state.end_date)
 st.session_state.start_date = start_date
 st.session_state.end_date = end_date
 
+# 不再显示重置按钮
+
 # ---------- 筛选 ----------
 filtered_df = df.copy()
 
@@ -165,23 +167,23 @@ else:
         cols = st.columns(5)
         with cols[0]:
             st.markdown(
-                f'<a href="{make_search_link("adv_title", row["头衔"])}" target="_self" class="search-link">头衔：<strong>{row["头衔"]}</strong></a>',
+                f'<a href="{make_search_link("adv_title", row["头衔"])}" class="search-link">头衔：<strong>{row["头衔"]}</strong></a>',
                 unsafe_allow_html=True
             )
         with cols[1]:
             st.markdown(
-                f'<a href="{make_search_link("adv_name", row["名字"])}" target="_self" class="search-link">名字：<strong>{row["名字"]}</strong></a>',
+                f'<a href="{make_search_link("adv_name", row["名字"])}" class="search-link">名字：<strong>{row["名字"]}</strong></a>',
                 unsafe_allow_html=True
             )
         with cols[2]:
             date_str = row['日期'].strftime('%Y-%m-%d')
             st.markdown(
-                f'<a href="?date={date_str}" target="_self" class="search-link">日期：<strong>{date_str}</strong></a>',
+                f'<a href="?date={date_str}" class="search-link">日期：<strong>{date_str}</strong></a>',
                 unsafe_allow_html=True
             )
         with cols[3]:
             st.markdown(
-                f'<a href="{make_search_link("adv_setjingren", row["设精人"])}" target="_self" class="search-link">设精人：<strong>{row["设精人"]}</strong></a>',
+                f'<a href="{make_search_link("adv_setjingren", row["设精人"])}" class="search-link">设精人：<strong>{row["设精人"]}</strong></a>',
                 unsafe_allow_html=True
             )
         with cols[4]:
