@@ -42,12 +42,13 @@ st.title("📊 头衔 · 名字可视化系统")
 # ----------------------------
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-csv_path = os.path.join(BASE_DIR, "title-name.csv")
+csv_path = os.path.join(BASE_DIR, "taisJingYe.csv")
+match_path = os.path.join(BASE_DIR, "title-match.csv")   # 新增匹配文件路径
 
 try:
     df = pd.read_csv(csv_path)
 except:
-    st.error("未找到 title-name.csv")
+    st.error("未找到taisJingYe.csv")
     st.stop()
 
 if df.shape[1] < 2:
@@ -58,6 +59,37 @@ df = df.iloc[:, :2]
 df.columns = ["头衔", "名字"]
 
 df = df.dropna()
+
+# ----------------------------
+# 读取头衔匹配文件（新增）
+# ----------------------------
+title_groups = []  # 存储每组头衔列表
+title_to_others = {}  # 映射：头衔 -> 同组其他头衔列表
+
+if os.path.exists(match_path):
+    try:
+        with open(match_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                # 假设每行用逗号分隔头衔
+                titles = [t.strip() for t in line.split(',') if t.strip()]
+                if len(titles) >= 2:
+                    title_groups.append(titles)
+                    # 为组内每个头衔记录其他头衔
+                    for i, t in enumerate(titles):
+                        others = titles[:i] + titles[i+1:]
+                        if t not in title_to_others:
+                            title_to_others[t] = []
+                        title_to_others[t].extend(others)
+        # 去重
+        for t in title_to_others:
+            title_to_others[t] = list(set(title_to_others[t]))
+    except Exception as e:
+        st.warning(f"读取 title-match.csv 时出错: {e}")
+else:
+    st.info("未找到 title-match.csv，将不显示头衔匹配信息")
 
 # -----------------------------
 # 侧边栏
@@ -84,8 +116,9 @@ expanded["名字"] = expanded["名字列表"]
 
 expanded = expanded[["头衔", "名字"]]
 
+# 去重（避免重复行影响统计）
+expanded_unique = expanded.drop_duplicates()
 
-# grouped = expanded.groupby("头衔")["名字"].apply(list).reset_index()
 
 # ----------------------------
 # 拼音排序
@@ -99,7 +132,26 @@ expanded = expanded.sort_values(
 # -----------------------------
 # 表格数据
 # -----------------------------
-grouped = expanded.groupby("头衔")["名字"].apply(list).reset_index()
+
+# -----------------------------
+# 表格数据（增加“其他头衔”列）
+# -----------------------------
+# 先按头衔分组，收集唯一名字列表
+grouped = expanded_unique.groupby("头衔")["名字"].apply(list).reset_index()
+
+# 为每个头衔添加“其他头衔”信息
+def get_other_titles_html(title):
+    others = title_to_others.get(title, [])
+    if others:
+        # 用 <br> 换行显示多个头衔
+        return "<br>".join(others)
+    return ""
+
+grouped["其他头衔"] = grouped["头衔"].apply(get_other_titles_html)
+
+# 重新排列列顺序：头衔、其他头衔、名字个数、名字列表
+grouped["名字个数"] = grouped["名字"].apply(len)
+
 
 max_len = grouped["名字"].apply(len).max()
 
@@ -107,13 +159,15 @@ table_data = []
 
 for _,row in grouped.iterrows():
 
-    r = [row["头衔"],len(row["名字"])] + row["名字"]
+    # 行数据：[头衔, 其他头衔, 名字个数] + 名字列表
+    r = [row["头衔"], row["其他头衔"], row["名字个数"]] + row["名字"]
 
     r += [""]*(max_len-len(row["名字"]))
 
     table_data.append(r)
 
-columns = ["头衔","名字个数"] + [f"名字{i+1}" for i in range(max_len)]
+# 定义列名
+columns = ["头衔", "其他头衔", "名字个数"] + [f"名字{i+1}" for i in range(max_len)]
 
 table_df = pd.DataFrame(table_data,columns=columns)
 
@@ -170,84 +224,153 @@ for _, row in expanded.iterrows():
         "target": f"name_{name}"
     })
 
+# 新增：头衔之间的边（基于匹配组）
+title_edges = set()  # 用于去重，存储 (title1, title2) 排序后的元组
+for group in title_groups:
+    # 组内每对头衔之间加边
+    for i in range(len(group)):
+        for j in range(i+1, len(group)):
+            t1 = group[i]
+            t2 = group[j]
+            # 确保头衔存在于图中（可能不在当前数据中，但以防万一）
+            if t1 in title_set and t2 in title_set:
+                key = tuple(sorted([t1, t2]))
+                if key not in title_edges:
+                    title_edges.add(key)
+                    edges.append({
+                        "source": f"title_{t1}",
+                        "target": f"title_{t2}",
+                        "lineStyle": {
+                            "color": "#ffaa66",
+                            "width": 2,
+                            "type": "dashed"   # 可选，便于区分
+                        }
+                    })
+
 # -----------------------------
 # 页面布局
 # -----------------------------
-col1,col2=st.columns([2,3])
+col1,col2=st.columns([1,2])
 
 # 左侧表格
 with col1:
-
     st.subheader("📋 头衔列表")
-
-    html_table = table_df.to_html(index=False, border=0)
-
+    
+    # 将 DataFrame 转为 HTML 表格（不包含索引）
+    html_table = table_df.to_html(index=False, border=0, escape=False)
+    
+    # 嵌入搜索词，转义单引号防止 JavaScript 语法错误
+    search_term = search_name.replace("'", "\\'") if search_name else ""
+    
     html_code = f"""
     <style>
     .table-container {{
-        overflow:auto;
-        height:650px;
-        border:1px solid #e6e6e6;
-        border-radius:6px;
+        overflow: auto;
+        height: 650px;
+        border: 1px solid #e6e6e6;
+        border-radius: 6px;
+        position: relative;
     }}
-
-    /* 表格基础样式 */
     table {{
         border-collapse: collapse;
-        width:100%;
-        font-size:13px;
+        width: 100%;
+        font-size: 13px;
     }}
-
     th, td {{
-        padding:6px 10px;
-        border-bottom:1px solid #eee;
+        padding: 6px 10px;
+        border-bottom: 1px solid #eee;
         white-space: nowrap;
-        text-align:left;
+        text-align: left;
     }}
-
-    /* 表头固定并添加阴影 */
     th {{
-        background:#f6f7fb;
+        background: #f6f7fb;
         position: sticky;
         top: 0;
-        z-index:3;
-        font-weight:600;
-        box-shadow:0 2px 4px rgba(0,0,0,0.08);
+        z-index: 3;
+        font-weight: 600;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.08);
     }}
-
-    /* 固定列 */
     th:first-child,
     td:first-child {{
         position: sticky;
         left: 0;
-        background:#f6f7fb;
-        z-index:4;
-        font-weight:600;
-        box-shadow:3px 0 6px rgba(0,0,0,0.08);
+        background: #f6f7fb;
+        z-index: 4;
+        font-weight: 600;
+        box-shadow: 3px 0 6px rgba(0,0,0,0.08);
     }}
-
-    /* 左上角格子层级最高 */
     th:first-child {{
-        z-index:5;
+        z-index: 5;
     }}
-
-    /* hover 高亮 */
     tr:hover td {{
-        background:#f7f9fc;
+        background: #f7f9fc;
     }}
-    
+    /* 高亮样式 */
+    .highlight-row {{
+        background-color: #ffff99 !important;
+    }}
     </style>
-
-    <div class="table-container">
+    
+    <div class="table-container" id="table-container">
     {html_table}
     </div>
+    
+    <script>
+    (function() {{
+        var searchTerm = "{search_term}".toLowerCase();
+        var container = document.getElementById("table-container");
+        var table = container.querySelector("table");
+        if (!table) return;
+        
+        var rows = table.querySelectorAll("tbody tr");
+        var firstMatchRow = null;
+        
+        // 清除之前的高亮
+        rows.forEach(row => {{
+            row.classList.remove("highlight-row");
+        }});
+        
+        if (searchTerm !== "") {{
+            // 遍历每一行
+            for (var i = 0; i < rows.length; i++) {{
+                var row = rows[i];
+                var cells = row.cells;
+                // 检查头衔列（第一列，索引0）
+                var matched = cells[0] && cells[0].innerText.toLowerCase().includes(searchTerm);
+                // 如果头衔列未匹配，再检查所有名字列（从第四列，索引3开始）
+                if (!matched) {{
+                    for (var j = 3; j < cells.length; j++) {{
+                        if (cells[j].innerText.toLowerCase().includes(searchTerm)) {{
+                            matched = true;
+                            break;
+                        }}
+                    }}
+                }}
+                if (matched) {{
+                    row.classList.add("highlight-row");
+                    if (!firstMatchRow) {{
+                        firstMatchRow = row;
+                    }}
+                }}
+            }}
+            
+            // 滚动到第一个匹配行
+            if (firstMatchRow) {{
+                var containerRect = container.getBoundingClientRect();
+                var rowRect = firstMatchRow.getBoundingClientRect();
+                var scrollTop = container.scrollTop;
+                var offset = rowRect.top - containerRect.top + scrollTop - 100;  // 偏移避免紧贴顶部
+                container.scrollTo({{
+                    top: offset,
+                    behavior: "smooth"
+                }});
+            }}
+        }}
+    }})();
+    </script>
     """
-
-    components.html(
-        html_code,
-        height=680,
-        scrolling=True
-    )
+    
+    components.html(html_code, height=680, scrolling=True)
 
 
 # -----------------------------
