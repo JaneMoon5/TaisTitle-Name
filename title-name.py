@@ -44,6 +44,7 @@ st.title("📊 头衔 · 名字可视化系统")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 csv_path = os.path.join(BASE_DIR, "taisJingYe.csv")
 match_path = os.path.join(BASE_DIR, "title-match.csv")   # 新增匹配文件路径
+add_path = os.path.join(BASE_DIR, "title-add-name.csv")  # 新增补充文件路径
 
 try:
     df = pd.read_csv(csv_path)
@@ -60,8 +61,83 @@ df.columns = ["头衔", "名字"]
 
 df = df.dropna()
 
+
+# -----------------------------
+# 侧边栏
+# -----------------------------
+with st.sidebar:
+
+    st.header("🔍 搜索")
+
+    search_name = st.text_input("搜索名字")
+
+
 # ----------------------------
-# 读取头衔匹配文件（新增）
+# 解析名字
+# ----------------------------
+def split_names(x):
+    return [n.strip() for n in str(x).split(",") if n.strip()]
+
+df["名字列表"] = df["名字"].apply(split_names)
+
+# 展开
+expanded = df.explode("名字列表")
+
+# 统一列名
+expanded["名字"] = expanded["名字列表"]
+
+expanded = expanded[["头衔", "名字"]]
+
+# 去重（避免重复行影响统计）
+expanded_unique = expanded.drop_duplicates()
+
+
+# ----------------------------
+# +++ 新增：读取 title-add-name.csv 并合并补充数据 +++
+# ----------------------------
+if os.path.exists(add_path):
+    try:
+        add_df_raw = pd.read_csv(add_path, header=None, encoding='utf-8')
+        add_records = []
+        for _, row in add_df_raw.iterrows():
+            title = row[0]
+            if pd.isna(title) or str(title).strip() == "":
+                continue
+            title = str(title).strip()
+            # 遍历该行后面的所有列（第二列及以后）
+            for col in range(1, len(row)):
+                name_val = row[col]
+                if pd.isna(name_val):
+                    continue
+                name = str(name_val).strip()
+                if name:
+                    add_records.append({"头衔": title, "名字": name})
+        if add_records:
+            add_df = pd.DataFrame(add_records)
+            # 合并并去重（避免重复添加同一头衔下的同一名字）
+            expanded_unique = pd.concat([expanded_unique, add_df], ignore_index=True)
+            expanded_unique = expanded_unique.drop_duplicates(subset=["头衔", "名字"])
+    except Exception as e:
+        st.warning(f"读取 title-add-name.csv 时出错: {e}")
+else:
+    st.info("未找到 title-add-name.csv，将不添加补充名字")
+
+# 重新构建 expanded（唯一边，用于图谱和排序）
+expanded = expanded_unique.copy()
+    
+    
+# ----------------------------
+# 拼音排序（按头衔）
+# ----------------------------
+
+expanded = expanded.sort_values(
+    by="头衔",
+    key=lambda col: col.map(lambda x: "".join(lazy_pinyin(x)))
+)
+
+
+# ----------------------------
+# 读取头衔匹配文件（用于“其他头衔”列）
 # ----------------------------
 title_groups = []  # 存储每组头衔列表
 title_to_others = {}  # 映射：头衔 -> 同组其他头衔列表
@@ -90,52 +166,12 @@ if os.path.exists(match_path):
         st.warning(f"读取 title-match.csv 时出错: {e}")
 else:
     st.info("未找到 title-match.csv，将不显示头衔匹配信息")
-
-# -----------------------------
-# 侧边栏
-# -----------------------------
-with st.sidebar:
-
-    st.header("🔍 搜索")
-
-    search_name = st.text_input("搜索名字")
-
-# ----------------------------
-# 解析名字
-# ----------------------------
-def split_names(x):
-    return [n.strip() for n in str(x).split(",") if n.strip()]
-
-df["名字列表"] = df["名字"].apply(split_names)
-
-# 展开
-expanded = df.explode("名字列表")
-
-# 统一列名
-expanded["名字"] = expanded["名字列表"]
-
-expanded = expanded[["头衔", "名字"]]
-
-# 去重（避免重复行影响统计）
-expanded_unique = expanded.drop_duplicates()
-
-
-# ----------------------------
-# 拼音排序
-# ----------------------------
-
-expanded = expanded.sort_values(
-    by="头衔",
-    key=lambda col: col.map(lambda x: "".join(lazy_pinyin(x)))
-)
-
+    
+    
 # -----------------------------
 # 表格数据
 # -----------------------------
 
-# -----------------------------
-# 表格数据（增加“其他头衔”列）
-# -----------------------------
 # 先按头衔分组，收集唯一名字列表
 grouped = expanded_unique.groupby("头衔")["名字"].apply(list).reset_index()
 
@@ -171,6 +207,7 @@ columns = ["头衔", "其他头衔", "名字个数"] + [f"名字{i+1}" for i in 
 
 table_df = pd.DataFrame(table_data,columns=columns)
 
+
 # -----------------------------
 # 节点颜色
 # -----------------------------
@@ -179,7 +216,7 @@ def name_color(name):
     return f"hsl({h},70%,60%)"
 
 # ----------------------------
-# 构建图数据
+# 构建图数据（节点、边）
 # ----------------------------
 
 nodes = []
@@ -224,7 +261,7 @@ for _, row in expanded.iterrows():
         "target": f"name_{name}"
     })
 
-# 新增：头衔之间的边（基于匹配组）
+# 头衔之间的边（基于匹配组）
 title_edges = set()  # 用于去重，存储 (title1, title2) 排序后的元组
 for group in title_groups:
     # 组内每对头衔之间加边
@@ -388,7 +425,7 @@ with col2:
     html=f"""
     <html>
     <head>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
     </head>
 
     <body>
